@@ -39,3 +39,6 @@ No compiler? Push this folder to GitHub: `.github/workflows/build.yml` builds Wi
 Offline test: `cmake -S . -B build -DGRS_BUILD_TESTS=ON && cmake --build build --target dsp_test && ./build/dsp_test`
 
 JUCE is used under AGPLv3/commercial licensing: if you distribute the plugin, AGPL terms apply.
+
+## Changes
+- 1.0.1: the diode clipping is now solved to convergence (previously a fixed small number of iterations, which left up to about 48 mV of error in the LED setting). Added automated checks against a reference solution and a periodicity check.

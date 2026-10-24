@@ -118,6 +118,67 @@ int main()
         check (r.finite, "finite at other sample rates");
     }
 
+    // --- the clipping stage must match a high-precision (bisection) solution of the same equation
+    for (int dtype = 0; dtype < 3; ++dtype)
+        for (double amp : { 0.0034, 0.05, 0.3, 1.5, 4.0 })
+        {
+            const auto dm = bigmuff::diodeFor (dtype);
+            const double fsOS = 176400.0;
+            bigmuff::ClipStage stage; stage.prepare ((float) fsOS, 70.0f, 15.0f);
+            bigmuff::OnePole hp; hp.setCutoff (70.0f, (float) fsOS);
+            double vPrev = 0.0, maxErr = 0.0;
+            for (int i = 0; i < 44100; ++i)
+            {
+                const float x = (float) (amp * std::sin (2.0 * M_PI * 330.0 * i / fsOS));
+                const double I = (double) hp.hp (x) * 15.0 / 1.0e5, Cdt = 440.0e-12 * fsOS;
+                double lo = -3.0, hi = 3.0;
+                for (int k = 0; k < 200; ++k)
+                {
+                    const double V = 0.5 * (lo + hi);
+                    const double g = (V - vPrev) * Cdt + V / 1.0e5
+                                     + dm.Is * (std::exp (std::min (V / dm.nVt, 40.0)) - std::exp (std::min (-V / dm.nVt, 40.0))) - I;
+                    if (g > 0.0) hi = V; else lo = V;
+                }
+                vPrev = 0.5 * (lo + hi);
+                maxErr = std::max (maxErr, std::fabs ((double) stage.process (x, dm) - vPrev));
+            }
+            if (maxErr > 1.0e-3)
+            {
+                std::printf ("clip stage diode=%d amp=%.4f: max error %.6f V\n", dtype, amp, maxErr);
+                check (false, "clipping stage matches the reference solution within 1 mV");
+            }
+        }
+
+    // --- periodicity: 375 Hz at 48 kHz repeats every 128 samples; noise or limit cycles would break that
+    for (int d = 0; d < 3; ++d)
+        for (float sus : { 0.1f, 1.0f })
+            for (double a : { 0.02, 0.5 })
+            {
+                bigmuff::Params q; q.diode = d; q.sustain = sus;
+                bigmuff::Engine eng; eng.prepare (48000.0);
+                const int N = 96000, block = 512;
+                juce::AudioBuffer<float> buf (2, block);
+                std::vector<float> y;
+                for (int pos = 0; pos < N; pos += block)
+                {
+                    for (int i = 0; i < block; ++i)
+                    {
+                        const float v = (float) (a * std::sin (2.0 * M_PI * 375.0 * (pos + i) / 48000.0));
+                        buf.setSample (0, i, v); buf.setSample (1, i, v);
+                    }
+                    eng.process (buf, q);
+                    for (int i = 0; i < block; ++i) y.push_back (buf.getSample (0, i));
+                }
+                double e = 0, s = 0;
+                for (int i = 64000; i < N; ++i) { const double dd = y[(size_t) i] - y[(size_t) i - 128]; e += dd * dd; s += (double) y[(size_t) i] * y[(size_t) i]; }
+                const double res = s > 1e-12 ? std::sqrt (e / s) : 0.0;
+                if (res > 1.0e-3)
+                {
+                    std::printf ("periodicity diode=%d sustain=%.1f amp=%.2f: residual %.2e\n", d, sus, a, res);
+                    check (false, "output is periodic for a periodic input (no noise or limit cycles)");
+                }
+            }
+
     std::printf (failures == 0 ? "\nALL CHECKS PASSED\n" : "\n%d CHECK(S) FAILED\n", failures);
     return failures;
 }

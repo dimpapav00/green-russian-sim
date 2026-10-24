@@ -79,22 +79,28 @@ public:
         const double I = (double) hp.hp (x) * K / Rf;      // input current into the virtual summing node
         const double Cdt = Cf / dt;
 
-        // work on |J| by symmetry (diode pair is odd-symmetric)
-        const double J = vPrev * Cdt + I;
-        const double s = J >= 0.0 ? 1.0 : -1.0;
-        const double aJ = std::fabs (J);
-        const double vp = s * vPrev, Ip = s * I;
+        // Implicit equation: g(V) = (V - vPrev)/dt*Cf + V/Rf + 2*Is*sinh(V/nVt) - I = 0.
+        // g is monotone and odd apart from the history term, so the root has the sign of
+        // Jp = I + vPrev*Cf/dt and only its magnitude W is solved for. On W >= 0 the function is convex, so
+        // Newton started from an upper bound of the root converges monotonically. Two upper bounds are known:
+        // one that ignores the linear terms, and one that ignores the diodes; the smaller one is used.
+        const double Jp = I + vPrev * Cdt;
+        const double aJ = std::fabs (Jp);
+        const double lin = Cdt + 1.0 / Rf;
+        const double nVt = d.nVt;
 
-        double V = d.nVt * std::asinh (aJ / (2.0 * d.Is)); // upper bound of the root: Newton converges monotonically
-        for (int i = 0; i < 4; ++i)
+        double W = std::min (nVt * std::log1p (aJ / d.Is), aJ / lin);
+        for (int i = 0; i < 20; ++i)
         {
-            const double e = std::exp (std::min (V / d.nVt, 40.0));
-            const double ei = 1.0 / e;
-            const double g = (V - vp) * Cdt + V / Rf + d.Is * (e - ei) - Ip;
-            const double gp = Cdt + 1.0 / Rf + d.Is / d.nVt * (e + ei);
-            V -= g / gp;
+            const double e1 = std::exp (std::min (W / nVt, 40.0));
+            const double e2 = std::exp (-W / nVt);
+            const double g = W * lin + d.Is * (e1 - e2) - aJ;
+            const double gp = lin + d.Is * (e1 + e2) / nVt;
+            const double dW = g / gp;
+            W = std::max (0.0, W - dW);
+            if (std::fabs (dW) < 1.0e-10) break;
         }
-        vPrev = s * V;
+        vPrev = Jp >= 0.0 ? W : -W;
         return (float) vPrev;
     }
 
